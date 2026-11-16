@@ -1,12 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState, useRef } from "react";
-import { Plus, Trash2, Mic, Radio, Save, Play, Download, Upload } from "lucide-react";
+import { Plus, Trash2, Mic, Radio, Save, Play, Download, Upload, Cloud, Loader2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Panel, Segmented } from "./Metronome";
 import { uid, type Mixer, type Song, type SongSettings } from "@/lib/drum/types";
 import { exportRepertory, importRepertory } from "@/lib/sync/repertoryExport";
+import { syncService } from "@/lib/sync/supabaseSync";
+import { localDb } from "@/lib/db/indexedDbStorage";
 
 const field = "min-h-12 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-ring";
 
@@ -127,6 +129,7 @@ export function SetlistSheet({
   onLoad: (s: Song) => void;
 }) {
   const [name, setName] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const save = () => {
     if (!name.trim()) return;
     const song: Song = { ...current, cues: current.cues.map((c) => ({ ...c })), id: uid(), name: name.trim() };
@@ -169,35 +172,73 @@ export function SetlistSheet({
             })}
           </ol>
 
-          <div className="pt-2 border-t border-border flex gap-2">
+          <div className="pt-2 border-t border-border flex flex-col gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => exportRepertory(songs)}
+                disabled={songs.length === 0}
+                className="flex-1 flex items-center justify-center gap-2 min-h-11 rounded-xl border border-border bg-secondary text-xs font-semibold text-foreground hover:bg-accent disabled:opacity-40 transition-colors"
+              >
+                <Download className="size-3.5" /> Exportar (JSON)
+              </button>
+              <label className="flex-1 flex items-center justify-center gap-2 min-h-11 rounded-xl border border-border bg-secondary text-xs font-semibold text-foreground hover:bg-accent cursor-pointer transition-colors">
+                <Upload className="size-3.5" /> Importar (JSON)
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const imported = await importRepertory(file);
+                      setSongs(imported.songs);
+                      alert(`${imported.songs.length} músicas importadas com sucesso!`);
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : "Erro ao importar repertório.");
+                    } finally {
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
+
             <button
-              onClick={() => exportRepertory(songs)}
-              disabled={songs.length === 0}
-              className="flex-1 flex items-center justify-center gap-2 min-h-11 rounded-xl border border-border bg-secondary text-xs font-semibold text-foreground hover:bg-accent disabled:opacity-40 transition-colors"
-            >
-              <Download className="size-3.5" /> Exportar (JSON)
-            </button>
-            <label className="flex-1 flex items-center justify-center gap-2 min-h-11 rounded-xl border border-border bg-secondary text-xs font-semibold text-foreground hover:bg-accent cursor-pointer transition-colors">
-              <Upload className="size-3.5" /> Importar (JSON)
-              <input
-                type="file"
-                accept=".json"
-                className="hidden"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    const imported = await importRepertory(file);
-                    setSongs(imported.songs);
-                    alert(`${imported.songs.length} músicas importadas com sucesso!`);
-                  } catch (err) {
-                    alert(err instanceof Error ? err.message : "Erro ao importar repertório.");
-                  } finally {
-                    e.target.value = "";
+              onClick={async () => {
+                setSyncing(true);
+                try {
+                  for (const s of songs) {
+                    await localDb.saveSong({
+                      id: s.id,
+                      title: s.name,
+                      bpm: s.bpm,
+                      timeSignatureBeats: 4,
+                      timeSignatureValue: 4,
+                      subdivision: 1,
+                      countInBeats: s.countInBars * 4,
+                      notes: "",
+                      updatedAt: new Date().toISOString(),
+                    });
                   }
-                }}
-              />
-            </label>
+                  const res = await syncService.syncAll();
+                  if (res.errors.length > 0) {
+                    alert(`Sincronização realizada com avisos:\n${res.errors.join("\n")}`);
+                  } else {
+                    alert(`Sincronizado com Supabase com sucesso!\nEnviadas: ${res.pushedSongs}\nRecebidas: ${res.pulledSongs}`);
+                  }
+                } catch (err) {
+                  alert(`Erro ao sincronizar: ${err instanceof Error ? err.message : String(err)}`);
+                } finally {
+                  setSyncing(false);
+                }
+              }}
+              disabled={syncing}
+              className="w-full flex items-center justify-center gap-2 min-h-11 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            >
+              {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <Cloud className="size-3.5" />}
+              {syncing ? "Sincronizando com Supabase..." : "Sincronizar Nuvem (Supabase)"}
+            </button>
           </div>
         </div>
       </SheetContent>

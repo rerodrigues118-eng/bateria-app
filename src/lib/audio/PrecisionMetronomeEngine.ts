@@ -60,6 +60,7 @@ export class PrecisionMetronomeEngine {
       click: initialGains?.click ?? 0.85,
       count: initialGains?.count ?? 0.95,
       cues: initialGains?.cues ?? 1.0,
+      music: initialGains?.music ?? 0.85,
     };
   }
 

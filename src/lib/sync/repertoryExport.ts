@@ -1,4 +1,5 @@
-import type { Setlist, Song } from "../types/metronome";
+import type { Song } from "../drum/types";
+import type { Setlist } from "../types/metronome";
 
 export interface RepertoryData {
   version: string;

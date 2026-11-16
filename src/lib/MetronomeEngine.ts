@@ -22,7 +22,7 @@ export interface MetronomeTickEvent {
   time: number;
   isAccent: boolean;
   bpm: number;
-  cueKey?: string;
+  cueKey?: string | undefined;
 }
 
 export interface MetronomeVolumes {
@@ -153,7 +153,7 @@ export class MetronomeEngine {
     }
 
     let arrayBuffer: ArrayBuffer;
-    if (fileOrUrl instanceof Blob || fileOrUrl instanceof File) {
+    if (typeof fileOrUrl !== "string") {
       arrayBuffer = await fileOrUrl.arrayBuffer();
     } else {
       const response = await fetch(fileOrUrl);

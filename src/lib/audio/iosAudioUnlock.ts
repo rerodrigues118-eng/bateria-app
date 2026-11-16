@@ -58,7 +58,7 @@ export class IOSAudioUnlocker {
 
       // Resume o contexto
       await ctx.resume();
-      return ctx.state === "running";
+      return (ctx.state as string) === "running";
     } catch (err) {
       console.warn("Aviso: Falha ao desbloquear AudioContext no iOS:", err);
       return false;

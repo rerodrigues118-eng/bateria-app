@@ -79,7 +79,6 @@ export class DrumLiveMixer {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          latency: 0,
         },
       });
 
