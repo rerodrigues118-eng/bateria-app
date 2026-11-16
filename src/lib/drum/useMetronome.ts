@@ -3,6 +3,44 @@ import { accentFor, BEATS, type Mixer, type SongSettings } from "./types";
 
 const NUMBERS = ["Um", "Dois", "Três", "Quatro", "Cinco", "Seis"];
 
+const AUDIO_FILES: Record<string, string> = {
+  "1": "/audio/falas/um.mp3",
+  "2": "/audio/falas/dois.mp3",
+  "3": "/audio/falas/tres.mp3",
+  "4": "/audio/falas/quatro.mp3",
+  "virada": "/audio/falas/virada em.mp3",
+  "intro": "/audio/falas/Intro em.mp3",
+  "pratos": "/audio/falas/enfeites no prato em.mp3",
+  "prato": "/audio/falas/enfeites no prato em.mp3",
+  "solo": "/audio/falas/solo.mp3",
+};
+
+// Cache global de áudios decodificados em memória RAM
+const globalAudioBufferCache = new Map<string, AudioBuffer>();
+
+async function loadAudioBuffer(ctx: AudioContext, key: string, url: string): Promise<AudioBuffer | null> {
+  if (globalAudioBufferCache.has(key)) return globalAudioBufferCache.get(key)!;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    const decoded = await ctx.decodeAudioData(arrayBuffer);
+    globalAudioBufferCache.set(key, decoded);
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function resolveVoiceKey(text: string): string | null {
+  const normalized = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (normalized.includes("virada")) return "virada";
+  if (normalized.includes("intro")) return "intro";
+  if (normalized.includes("prato")) return "pratos";
+  if (normalized.includes("solo")) return "solo";
+  return null;
+}
+
 function speak(text: string, volume: number) {
   if (typeof window === "undefined" || !("speechSynthesis" in window) || volume <= 0) return;
   const u = new SpeechSynthesisUtterance(text);
@@ -19,32 +57,96 @@ export interface Tick {
   countIn: boolean;
 }
 
-export function useMetronome(settings: SongSettings, mixer: Mixer) {
+export async function loadCustomAudioTrack(ctx: AudioContext, key: string, blob: Blob | File): Promise<AudioBuffer> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const buffer = await ctx.decodeAudioData(arrayBuffer);
+  globalAudioBufferCache.set(key, buffer);
+  return buffer;
+}
+
+export function useMetronome(settings: SongSettings, mixer: Mixer, backingTrackKey?: string | null) {
   const [playing, setPlaying] = useState(false);
   const [tick, setTick] = useState<Tick | null>(null);
   const settingsRef = useRef(settings);
   const mixerRef = useRef(mixer);
+  const backingTrackKeyRef = useRef(backingTrackKey);
   settingsRef.current = settings;
   mixerRef.current = mixer;
+  backingTrackKeyRef.current = backingTrackKey;
 
   const ctxRef = useRef<AudioContext | null>(null);
   const timerRef = useRef<number | null>(null);
+  const musicSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const state = useRef({ next: 0, sub: 0, beat: 0, bar: 1, countInLeft: 0 });
 
   const click = (time: number, kind: "strong" | "medium" | "weak" | "sub" | "stick", gain: number) => {
     const ctx = ctxRef.current!;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    const freq = { strong: 1760, medium: 1320, weak: 1000, sub: 750, stick: 2400 }[kind];
-    osc.type = kind === "stick" ? "triangle" : "square";
-    osc.frequency.setValueAtTime(freq, time);
-    const peak = gain * (kind === "sub" ? 0.35 : kind === "weak" ? 0.6 : 1) * 0.5;
-    g.gain.setValueAtTime(0.0001, time);
-    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), time + 0.002);
-    g.gain.exponentialRampToValueAtTime(0.0001, time + (kind === "stick" ? 0.03 : 0.05));
+    const soundType = settingsRef.current.clickSound ?? "woodblock";
+
+    if (kind === "stick") {
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(2400, time);
+      g.gain.setValueAtTime(0.0001, time);
+      g.gain.exponentialRampToValueAtTime(Math.max(gain * 0.5, 0.0002), time + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, time + 0.03);
+    } else {
+      switch (soundType) {
+        case "beep":
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(kind === "strong" ? 1200 : kind === "medium" ? 1000 : 800, time);
+          g.gain.setValueAtTime(0.0001, time);
+          g.gain.exponentialRampToValueAtTime(Math.max(gain * 0.5, 0.0002), time + 0.001);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + (kind === "sub" ? 0.03 : 0.05));
+          break;
+        case "cowbell":
+          osc.type = "square";
+          osc.frequency.setValueAtTime(kind === "strong" ? 800 : kind === "medium" ? 680 : 580, time);
+          g.gain.setValueAtTime(0.0001, time);
+          g.gain.exponentialRampToValueAtTime(Math.max(gain * 0.4, 0.0002), time + 0.001);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + 0.08);
+          break;
+        case "mechanical":
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(kind === "strong" ? 2400 : kind === "medium" ? 2000 : 1600, time);
+          g.gain.setValueAtTime(0.0001, time);
+          g.gain.exponentialRampToValueAtTime(Math.max(gain * 0.35, 0.0002), time + 0.001);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + 0.02);
+          break;
+        case "woodblock":
+        default:
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(kind === "strong" ? 1800 : kind === "medium" ? 1400 : 1100, time);
+          g.gain.setValueAtTime(0.0001, time);
+          g.gain.exponentialRampToValueAtTime(Math.max(gain * 0.6, 0.0002), time + 0.001);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + 0.035);
+          break;
+      }
+    }
+
     osc.connect(g).connect(ctx.destination);
     osc.start(time);
-    osc.stop(time + 0.07);
+    osc.stop(time + 0.09);
+  };
+
+  const playSample = (time: number, bufferKey: string, gain: number) => {
+    const ctx = ctxRef.current;
+    if (!ctx) return false;
+    const buffer = globalAudioBufferCache.get(bufferKey);
+    if (!buffer) return false;
+
+    try {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(Math.min(1, Math.max(0, gain)), time);
+      source.connect(g).connect(ctx.destination);
+      source.start(time);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const at = (time: number, fn: () => void) => {
@@ -69,13 +171,23 @@ export function useMetronome(settings: SongSettings, mixer: Mixer) {
         if (counting) {
           if (cfg.countInVoice === "voice") {
             click(time, "stick", mx.master * mx.countIn * 0.4);
-            at(time, () => speak(NUMBERS[beat] ?? String(beat + 1), mx.master * mx.countIn));
+            const countKey = String(beat + 1);
+            const played = playSample(time, countKey, mx.master * mx.countIn);
+            if (!played) {
+              at(time, () => speak(NUMBERS[beat] ?? String(beat + 1), mx.master * mx.countIn));
+            }
           } else click(time, "stick", mx.master * mx.countIn);
         } else {
           click(time, accentFor(cfg.timeSig, beat), mx.master * mx.click);
           if (beat === 0) {
             const cue = cfg.cues.find((c) => c.bar === bar);
-            if (cue) at(time, () => speak(cue.text, mx.master * mx.cues));
+            if (cue) {
+              const voiceKey = resolveVoiceKey(cue.text);
+              const played = voiceKey ? playSample(time, voiceKey, mx.master * mx.cues) : false;
+              if (!played) {
+                at(time, () => speak(cue.text, mx.master * mx.cues));
+              }
+            }
           }
         }
         at(time, () => setTick({ beat, bar: counting ? -s.countInLeft : bar, countIn: counting }));
@@ -101,8 +213,38 @@ export function useMetronome(settings: SongSettings, mixer: Mixer) {
   const start = useCallback(async () => {
     if (!ctxRef.current) ctxRef.current = new AudioContext();
     await ctxRef.current.resume();
+
+    // Pré-carrega buffers das vozes reais em segundo plano
+    Object.entries(AUDIO_FILES).forEach(([k, url]) => {
+      loadAudioBuffer(ctxRef.current!, k, url);
+    });
+
+    const startTime = ctxRef.current.currentTime + 0.08;
+
+    // Dispara a música de fundo sincronizada no tempo exato de hardware
+    const trackKey = backingTrackKeyRef.current;
+    if (trackKey && globalAudioBufferCache.has(trackKey)) {
+      try {
+        if (musicSourceRef.current) {
+          musicSourceRef.current.stop();
+          musicSourceRef.current.disconnect();
+        }
+        const buffer = globalAudioBufferCache.get(trackKey)!;
+        const source = ctxRef.current.createBufferSource();
+        source.buffer = buffer;
+        const gainNode = ctxRef.current.createGain();
+        const musicVol = (mixerRef.current.master || 1) * (mixerRef.current.music ?? 0.85);
+        gainNode.gain.setValueAtTime(musicVol, startTime);
+        source.connect(gainNode).connect(ctxRef.current.destination);
+        source.start(startTime);
+        musicSourceRef.current = source;
+      } catch (err) {
+        console.warn("Erro ao iniciar backing track:", err);
+      }
+    }
+
     state.current = {
-      next: ctxRef.current.currentTime + 0.08,
+      next: startTime,
       sub: 0,
       beat: 0,
       bar: 1,
@@ -116,13 +258,28 @@ export function useMetronome(settings: SongSettings, mixer: Mixer) {
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+
+    if (musicSourceRef.current) {
+      try {
+        musicSourceRef.current.stop();
+        musicSourceRef.current.disconnect();
+      } catch {}
+      musicSourceRef.current = null;
+    }
+
     setPlaying(false);
     setTick(null);
   }, []);
 
+  const resetMeasures = useCallback(() => {
+    state.current.bar = 1;
+    state.current.beat = 0;
+    state.current.sub = 0;
+  }, []);
+
   useEffect(() => () => stop(), [stop]);
 
-  return { playing, tick, start, stop, toggle: () => (playing ? stop() : start()) };
+  return { playing, tick, start, stop, resetMeasures, toggle: () => (playing ? stop() : start()) };
 }
 
 export function useWakeLock(active: boolean) {

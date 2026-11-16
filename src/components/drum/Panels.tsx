@@ -1,11 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
-import { Plus, Trash2, Mic, Radio, Save, Play } from "lucide-react";
+import { useState, useRef } from "react";
+import { Plus, Trash2, Mic, Radio, Save, Play, Download, Upload } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Panel, Segmented } from "./Metronome";
 import { uid, type Mixer, type Song, type SongSettings } from "@/lib/drum/types";
+import { exportRepertory, importRepertory } from "@/lib/sync/repertoryExport";
 
 const field = "min-h-12 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-ring";
 
@@ -81,6 +82,7 @@ export function MixerSheet({ open, onOpenChange, mixer, setMixer }: { open: bool
     { key: "click", label: "Clique do metrônomo" },
     { key: "countIn", label: "Contagem" },
     { key: "cues", label: "Avisos de voz" },
+    { key: "music", label: "Música de fundo (Backing Track)" },
   ];
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -89,15 +91,18 @@ export function MixerSheet({ open, onOpenChange, mixer, setMixer }: { open: bool
           <SheetTitle>Mixer</SheetTitle>
         </SheetHeader>
         <div className="space-y-6 px-4">
-          {rows.map((r) => (
-            <div key={r.key}>
-              <div className="mb-3 flex justify-between text-sm">
-                <span>{r.label}</span>
-                <span className="font-mono text-muted-foreground">{Math.round(mixer[r.key] * 100)}</span>
+          {rows.map((r) => {
+            const val = mixer[r.key] ?? 0.85;
+            return (
+              <div key={r.key}>
+                <div className="mb-3 flex justify-between text-sm">
+                  <span>{r.label}</span>
+                  <span className="font-mono text-muted-foreground">{Math.round(val * 100)}</span>
+                </div>
+                <Slider value={[val * 100]} max={100} step={1} onValueChange={([v]) => setMixer({ ...mixer, [r.key]: (v ?? 0) / 100 })} />
               </div>
-              <Slider value={[mixer[r.key] * 100]} max={100} step={1} onValueChange={([v]) => setMixer({ ...mixer, [r.key]: (v ?? 0) / 100 })} />
-            </div>
-          ))}
+            );
+          })}
         </div>
       </SheetContent>
     </Sheet>
@@ -163,6 +168,37 @@ export function SetlistSheet({
               );
             })}
           </ol>
+
+          <div className="pt-2 border-t border-border flex gap-2">
+            <button
+              onClick={() => exportRepertory(songs)}
+              disabled={songs.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 min-h-11 rounded-xl border border-border bg-secondary text-xs font-semibold text-foreground hover:bg-accent disabled:opacity-40 transition-colors"
+            >
+              <Download className="size-3.5" /> Exportar (JSON)
+            </button>
+            <label className="flex-1 flex items-center justify-center gap-2 min-h-11 rounded-xl border border-border bg-secondary text-xs font-semibold text-foreground hover:bg-accent cursor-pointer transition-colors">
+              <Upload className="size-3.5" /> Importar (JSON)
+              <input
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const imported = await importRepertory(file);
+                    setSongs(imported.songs);
+                    alert(`${imported.songs.length} músicas importadas com sucesso!`);
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Erro ao importar repertório.");
+                  } finally {
+                    e.target.value = "";
+                  }
+                }}
+              />
+            </label>
+          </div>
         </div>
       </SheetContent>
     </Sheet>

@@ -3,7 +3,7 @@ import { useRef } from "react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { BEATS, SUBDIVISIONS, clampBpm, type SongSettings, type TimeSig } from "@/lib/drum/types";
+import { BEATS, SUBDIVISIONS, CLICK_SOUNDS, clampBpm, type SongSettings, type TimeSig, type ClickSoundType } from "@/lib/drum/types";
 import type { Tick } from "@/lib/drum/useMetronome";
 
 export function Panel({ title, children, className }: { title?: string; children: React.ReactNode; className?: string }) {
@@ -165,6 +165,17 @@ export function BpmControls({ settings, update }: { settings: SongSettings; upda
             ),
           }))}
         />
+        <div className="pt-2">
+          <p className="mb-2 text-xs text-muted-foreground uppercase tracking-widest">Timbre do Clique</p>
+          <Segmented<ClickSoundType>
+            value={settings.clickSound ?? "woodblock"}
+            onChange={(clickSound) => update({ clickSound })}
+            options={CLICK_SOUNDS.map((cs) => ({
+              value: cs.value,
+              label: <span className="text-xs">{cs.label}</span>,
+            }))}
+          />
+        </div>
       </div>
     </Panel>
   );
