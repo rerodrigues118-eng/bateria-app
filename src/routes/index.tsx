@@ -1,26 +1,30 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { motion } from "framer-motion";
 import { useState } from "react";
 import {
-  ListMusic,
+  Activity,
+  Clock,
   SlidersHorizontal,
+  ListMusic,
   Play,
   Square,
-  Sun,
-  SunDim,
-  SkipForward,
-  Activity,
-  Layers,
   Radio,
-  Clock,
+  Drum,
+  Volume2,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { BpmControls, MetronomeDisplay, ScreenFlash } from "@/components/drum/Metronome";
-import { MixerSheet, SetlistSheet, VoicePanel } from "@/components/drum/Panels";
-import { BackingTrackPanel } from "@/components/drum/BackingTrackPanel";
-import { TimelineEditor } from "@/components/drum/TimelineEditor";
-import { DrumMixerPanel } from "@/components/drum/DrumMixerPanel";
-import { DEFAULT_MIXER, DEFAULT_SETTINGS, type Song, type SongSettings } from "@/lib/drum/types";
+import { ScreenFlash } from "@/components/drum/Metronome";
+import { StageView } from "@/components/views/StageView";
+import { StudioView } from "@/components/views/StudioView";
+import { MixerView } from "@/components/views/MixerView";
+import { RepertoryView } from "@/components/views/RepertoryView";
+import {
+  DEFAULT_MIXER,
+  DEFAULT_SETTINGS,
+  uid,
+  type Song,
+  type SongSettings,
+} from "@/lib/drum/types";
 import { useMetronome, usePersistent, useWakeLock } from "@/lib/drum/useMetronome";
 
 export const Route = createFileRoute("/")({
@@ -42,269 +46,334 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-type MobileTab = "metronome" | "timeline" | "mixer" | "cues";
+export type AppPage = "stage" | "studio" | "mixer" | "repertory";
+
+interface NavItem {
+  id: AppPage;
+  label: string;
+  sublabel: string;
+  icon: typeof Activity;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: "stage", label: "Palco", sublabel: "Metrônomo & Live", icon: Activity },
+  { id: "studio", label: "Estúdio", sublabel: "Timeline & Áudio", icon: Clock },
+  { id: "mixer", label: "Mixer", sublabel: "Mesa de Som", icon: SlidersHorizontal },
+  { id: "repertory", label: "Repertório", sublabel: "Setlists & Músicas", icon: ListMusic },
+];
 
 function Index() {
+  const [currentPage, setCurrentPage] = useState<AppPage>("stage");
   const [settings, setSettings] = usePersistent<SongSettings>("sc.settings", DEFAULT_SETTINGS);
   const [mixer, setMixer] = usePersistent("sc.mixer", DEFAULT_MIXER);
   const [songs, setSongs] = usePersistent<Song[]>("sc.songs", []);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [flash, setFlash] = usePersistent("sc.flash", true);
   const [keepAwake, setKeepAwake] = usePersistent("sc.wake", true);
-  const [mixerOpen, setMixerOpen] = useState(false);
-  const [setlistOpen, setSetlistOpen] = useState(false);
-  const [mobileTab, setMobileTab] = useState<MobileTab>("metronome");
 
   const currentSongId = activeId ?? "free_play";
   const metro = useMetronome(settings, mixer, currentSongId);
   const wake = useWakeLock(metro.playing && keepAwake);
-  const update = (p: Partial<SongSettings>) => setSettings((s) => ({ ...s, ...p }));
-  const active = songs.find((s) => s.id === activeId);
+  const updateSettings = (p: Partial<SongSettings>) => setSettings((s) => ({ ...s, ...p }));
 
-  const load = (s: Song) => {
+  const activeSong = songs.find((s) => s.id === activeId);
+
+  // Carrega música no metrônomo
+  const loadSong = (s: Song, targetPage: AppPage = "stage") => {
     const { id, name, ...rest } = s;
     setSettings(rest);
     setActiveId(id);
     metro.resetMeasures();
+    setCurrentPage(targetPage);
   };
 
-  const next = () => {
-    const i = songs.findIndex((s) => s.id === activeId);
-    const n = songs[i + 1] ?? songs[0];
-    if (n) load(n);
+  // Cria uma nova música
+  const handleAddNewSong = () => {
+    const newSong: Song = {
+      ...DEFAULT_SETTINGS,
+      id: uid(),
+      name: `Nova Música ${songs.length + 1}`,
+      cues: [],
+    };
+    setSongs([...songs, newSong]);
+    loadSong(newSong, "studio");
+  };
+
+  // Salva alterações na música atual
+  const handleSaveToRepertory = (title: string) => {
+    if (activeId) {
+      setSongs(
+        songs.map((s) => (s.id === activeId ? { ...s, ...settings, name: title } : s))
+      );
+    } else {
+      const newSong: Song = {
+        ...settings,
+        id: uid(),
+        name: title,
+      };
+      setSongs([...songs, newSong]);
+      setActiveId(newSong.id);
+    }
   };
 
   const currentMeasure = metro.tick?.bar ?? 1;
   const currentBeat = metro.tick?.beat ?? 0;
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col pb-28 md:pb-20">
+    <div className="min-h-screen bg-[#0A0A0B] text-foreground flex flex-col md:flex-row antialiased selection:bg-[#22C55E] selection:text-black">
       <ScreenFlash tick={metro.tick} enabled={flash} />
 
       {/* =========================================================================
-          HEADER PRINCIPAL (RESPONSIVO)
+          DESKTOP SIDEBAR FIXA (>= 768px | Largura: 240px | Fundo: #121215)
          ========================================================================= */}
-      <header className="sticky top-0 z-30 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-          {/* Logo e Botão Setlist */}
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => setSetlistOpen(true)}
-              className="flex min-h-11 items-center gap-2.5 rounded-xl border border-border bg-card px-3 text-left hover:border-live/60 transition-colors"
-            >
-              <ListMusic className="size-4 shrink-0 text-live" />
-              <div className="min-w-0">
-                <span className="block text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
-                  Setlist
-                </span>
-                <span className="block truncate text-xs font-semibold max-w-[140px] md:max-w-[200px]">
-                  {active?.name ?? "Música Livre"}
-                </span>
-              </div>
-            </button>
-
-            {songs.length > 1 && (
-              <button
-                aria-label="Próxima música"
-                onClick={next}
-                className="grid size-11 place-items-center rounded-xl border border-border bg-card hover:bg-secondary text-foreground transition-colors"
-              >
-                <SkipForward className="size-4" />
-              </button>
-            )}
-          </div>
-
-          {/* Abas de Navegação no Mobile (< 768px) */}
-          <div className="flex md:hidden items-center gap-1 bg-secondary/80 p-1 rounded-xl border border-border">
-            <button
-              onClick={() => setMobileTab("metronome")}
-              className={cn(
-                "px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
-                mobileTab === "metronome" ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground",
-              )}
-            >
-              Metrônomo
-            </button>
-            <button
-              onClick={() => setMobileTab("timeline")}
-              className={cn(
-                "px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
-                mobileTab === "timeline" ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground",
-              )}
-            >
-              Timeline
-            </button>
-            <button
-              onClick={() => setMobileTab("mixer")}
-              className={cn(
-                "px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
-                mobileTab === "mixer" ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground",
-              )}
-            >
-              Mixer
-            </button>
-            <button
-              onClick={() => setMobileTab("cues")}
-              className={cn(
-                "px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors",
-                mobileTab === "cues" ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground",
-              )}
-            >
-              Vozes
-            </button>
-          </div>
-
-          {/* Botões do Topo Direito (Desktop & Mobile) */}
-          <div className="flex items-center gap-2">
-            <button
-              aria-label="Mixer Geral"
-              onClick={() => setMixerOpen(true)}
-              className="grid size-11 place-items-center rounded-xl border border-border bg-card hover:bg-secondary transition-colors"
-            >
-              <SlidersHorizontal className="size-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* =========================================================================
-          CONTEÚDO PRINCIPAL (LAYOUT DUAL: MOBILE FIRST vs. WORKSPACE DAW)
-         ========================================================================= */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
-        {/* --- VISÃO MOBILE (< 768px) CONTROLADA POR ABAS --- */}
-        <div className="block md:hidden space-y-4">
-          {mobileTab === "metronome" && (
-            <div className="space-y-4">
-              <MetronomeDisplay
-                settings={settings}
-                tick={metro.tick}
-                playing={metro.playing}
-                flash={flash}
-                onFlash={setFlash}
-              />
-              <BpmControls settings={settings} update={update} />
-              <BackingTrackPanel
-                songId={currentSongId}
-                onVolumeChange={(musicVol) => setMixer((m) => ({ ...m, music: musicVol }))}
-              />
+      <aside className="hidden md:flex md:w-[240px] md:flex-col fixed inset-y-0 left-0 z-40 bg-[#121215] border-r border-[#2D2D35] p-4 justify-between">
+        <div className="space-y-6">
+          {/* Logo do App */}
+          <div className="flex items-center gap-3 px-2 py-1">
+            <div className="size-10 rounded-xl bg-[#22C55E] text-black flex items-center justify-center font-black shadow-[0_0_20px_rgba(34,197,94,0.35)]">
+              <Activity className="size-5" />
             </div>
-          )}
+            <div>
+              <span className="block font-black tracking-tight text-white text-base">
+                STICK CLICK
+              </span>
+              <span className="block text-[10px] font-mono tracking-widest text-[#8E8E93] uppercase">
+                Pro Drummer DAW
+              </span>
+            </div>
+          </div>
 
-          {mobileTab === "timeline" && (
-            <TimelineEditor
-              settings={settings}
-              updateSettings={update}
-              currentMeasure={currentMeasure}
-              currentBeat={currentBeat}
-              isPlaying={metro.playing}
-            />
-          )}
+          {/* Links de Navegação */}
+          <nav className="space-y-1.5">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const isActive = currentPage === item.id;
 
-          {mobileTab === "mixer" && (
-            <DrumMixerPanel />
-          )}
-
-          {mobileTab === "cues" && (
-            <VoicePanel settings={settings} update={update} />
-          )}
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setCurrentPage(item.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all relative",
+                    isActive
+                      ? "bg-[#22C55E]/15 text-[#22C55E] font-bold shadow-sm"
+                      : "text-[#8E8E93] hover:text-white hover:bg-[#1E1E22]"
+                  )}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="sidebar-active"
+                      className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-[#22C55E]"
+                    />
+                  )}
+                  <Icon className={cn("size-5 shrink-0", isActive ? "text-[#22C55E]" : "text-[#8E8E93]")} />
+                  <div className="min-w-0">
+                    <span className="block text-sm leading-none">{item.label}</span>
+                    <span className="block text-[10px] text-[#8E8E93] mt-1 leading-none">
+                      {item.sublabel}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        {/* --- VISÃO DESKTOP (>= 768px) ESTILO WORKSPACE DAW --- */}
-        <div className="hidden md:grid md:grid-cols-12 gap-5">
-          {/* Topo da DAW: Linha do Tempo Visual Multitrack (Full Width) */}
-          <div className="col-span-12">
-            <TimelineEditor
-              settings={settings}
-              updateSettings={update}
-              currentMeasure={currentMeasure}
-              currentBeat={currentBeat}
-              isPlaying={metro.playing}
-              totalMeasures={64}
-            />
+        {/* Mini Player / Transporte na Sidebar do Desktop */}
+        <div className="p-3.5 rounded-2xl bg-[#1E1E22] border border-[#2D2D35] space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={cn("size-2 rounded-full", metro.playing ? "bg-[#22C55E] animate-ping" : "bg-[#8E8E93]")} />
+              <span className="text-[11px] font-mono uppercase text-[#8E8E93]">
+                {metro.playing ? "Em Andamento" : "Parado"}
+              </span>
+            </div>
+            <span className="font-mono text-xs font-bold text-white">
+              {settings.bpm} BPM
+            </span>
           </div>
 
-          {/* Coluna Esquerda: Display Gigante do Metrônomo + Andamento (5 Colunas) */}
-          <div className="col-span-12 lg:col-span-5 space-y-4">
-            <MetronomeDisplay
-              settings={settings}
-              tick={metro.tick}
-              playing={metro.playing}
-              flash={flash}
-              onFlash={setFlash}
-            />
-            <BpmControls settings={settings} update={update} />
+          <div className="truncate text-xs font-bold text-white">
+            {activeSong?.name ?? "Música Livre"}
           </div>
 
-          {/* Coluna Direita: Backing Track + Mixer Multicanal ao Vivo (7 Colunas) */}
-          <div className="col-span-12 lg:col-span-7 space-y-4">
-            <BackingTrackPanel
-              songId={currentSongId}
-              onVolumeChange={(musicVol) => setMixer((m) => ({ ...m, music: musicVol }))}
-            />
-            <DrumMixerPanel />
-            <VoicePanel settings={settings} update={update} />
-          </div>
-        </div>
-      </div>
-
-      {/* =========================================================================
-          BARRA DE TRANSPORTE FIXA NA PARTE INFERIOR
-         ========================================================================= */}
-      <nav
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-2.5">
-          {/* Botão Wake Lock / Tela Acesa */}
           <button
-            onClick={() => setKeepAwake(!keepAwake)}
-            className={cn(
-              "flex size-12 flex-col items-center justify-center rounded-xl text-[10px] transition-colors",
-              keepAwake ? "text-foreground bg-secondary/80" : "text-muted-foreground",
-            )}
-          >
-            {keepAwake ? <Sun className="size-4 text-live" /> : <SunDim className="size-4" />}
-            {keepAwake ? (wake.locked ? "Tela On" : "Acesa") : "Auto"}
-          </button>
-
-          {/* Botão Central de Play / Stop Gigante */}
-          <motion.button
-            whileTap={{ scale: 0.92 }}
             onClick={metro.toggle}
-            aria-label={metro.playing ? "Parar" : "Tocar"}
             className={cn(
-              "-mt-8 grid size-20 md:size-24 place-items-center rounded-full border-4 border-background transition-all shadow-xl",
+              "w-full h-11 rounded-xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all",
               metro.playing
-                ? "bg-live text-live-foreground shadow-[0_0_40px_rgba(34,197,94,0.4)]"
-                : "bg-primary text-primary-foreground hover:scale-105",
+                ? "bg-[#22C55E] text-black shadow-[0_0_20px_rgba(34,197,94,0.4)]"
+                : "bg-white text-black hover:bg-neutral-200"
             )}
           >
             {metro.playing ? (
-              <Square className="size-7 md:size-8 fill-current" />
+              <>
+                <Square className="size-4 fill-current" />
+                <span>Parar</span>
+              </>
             ) : (
-              <Play className="ml-1 size-8 md:size-9 fill-current" />
+              <>
+                <Play className="size-4 fill-current ml-0.5" />
+                <span>Tocar</span>
+              </>
             )}
-          </motion.button>
+          </button>
+        </div>
+      </aside>
 
-          {/* Indicador de BPM e Compasso */}
-          <div className="flex size-12 flex-col items-center justify-center font-mono text-[10px] text-muted-foreground">
-            <span className="text-sm md:text-base font-bold text-foreground">{settings.bpm}</span>
-            <span>BPM · c.{metro.tick?.bar ?? 1}</span>
+      {/* =========================================================================
+          CONTEÚDO PRINCIPAL (Área Livre com Padding para Desktop & Mobile)
+         ========================================================================= */}
+      <main className="flex-1 md:pl-[240px] flex flex-col min-h-screen">
+        {/* Header Compacto para Mobile (< 768px) */}
+        <div className="flex md:hidden items-center justify-between px-4 py-3 bg-[#121215] border-b border-[#2D2D35] sticky top-0 z-30">
+          <div className="flex items-center gap-2.5">
+            <div className="size-8 rounded-lg bg-[#22C55E] text-black flex items-center justify-center font-black">
+              <Activity className="size-4" />
+            </div>
+            <span className="font-black text-sm tracking-tight text-white">STICK CLICK</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold text-[#22C55E] bg-[#1E1E22] px-2.5 py-1 rounded-lg border border-[#2D2D35]">
+              {settings.bpm} BPM
+            </span>
+            <button
+              onClick={metro.toggle}
+              className={cn(
+                "size-8 rounded-lg grid place-items-center transition-colors",
+                metro.playing ? "bg-[#22C55E] text-black" : "bg-white text-black"
+              )}
+            >
+              {metro.playing ? <Square className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current ml-0.5" />}
+            </button>
           </div>
         </div>
-      </nav>
 
-      {/* Modais e Gavetas Laterais */}
-      <MixerSheet open={mixerOpen} onOpenChange={setMixerOpen} mixer={mixer} setMixer={setMixer} />
-      <SetlistSheet
-        open={setlistOpen}
-        onOpenChange={setSetlistOpen}
-        songs={songs}
-        setSongs={setSongs}
-        current={settings}
-        activeId={activeId}
-        onLoad={load}
-      />
+        {/* Área das Páginas (com animação suave de transição) */}
+        <div className="flex-1 p-4 sm:p-6 md:p-8 pb-28 md:pb-8 max-w-7xl w-full mx-auto">
+          <AnimatePresence mode="wait">
+            {currentPage === "stage" && (
+              <motion.div
+                key="stage"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
+                className="h-full"
+              >
+                <StageView
+                  settings={settings}
+                  updateSettings={updateSettings}
+                  tick={metro.tick}
+                  isPlaying={metro.playing}
+                  onTogglePlay={metro.toggle}
+                  songs={songs}
+                  activeSongId={activeId}
+                  onSelectSong={(s) => loadSong(s, "stage")}
+                  flashEnabled={flash}
+                  onToggleFlash={setFlash}
+                  wakeLockActive={keepAwake && wake.locked}
+                  onToggleWakeLock={() => setKeepAwake(!keepAwake)}
+                />
+              </motion.div>
+            )}
+
+            {currentPage === "studio" && (
+              <motion.div
+                key="studio"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
+              >
+                <StudioView
+                  settings={settings}
+                  updateSettings={updateSettings}
+                  currentSongId={currentSongId}
+                  currentSongName={activeSong?.name}
+                  onSaveToRepertory={handleSaveToRepertory}
+                  currentMeasure={currentMeasure}
+                  currentBeat={currentBeat}
+                  isPlaying={metro.playing}
+                  onVolumeChange={(vol) => setMixer((m) => ({ ...m, music: vol }))}
+                />
+              </motion.div>
+            )}
+
+            {currentPage === "mixer" && (
+              <motion.div
+                key="mixer"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
+              >
+                <MixerView
+                  mixer={mixer}
+                  setMixer={setMixer}
+                />
+              </motion.div>
+            )}
+
+            {currentPage === "repertory" && (
+              <motion.div
+                key="repertory"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
+              >
+                <RepertoryView
+                  songs={songs}
+                  setSongs={setSongs}
+                  activeSongId={activeId}
+                  onSelectSong={(s) => loadSong(s, "stage")}
+                  onEditInStudio={(s) => loadSong(s, "studio")}
+                  onAddNewSong={handleAddNewSong}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </main>
+
+      {/* =========================================================================
+          MOBILE BOTTOM NAVIGATION BAR FIXA (< 768px | Fundo: #121215)
+         ========================================================================= */}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-50 bg-[#121215] border-t border-[#2D2D35] md:hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="grid grid-cols-4 h-16">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPage === item.id;
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => setCurrentPage(item.id)}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1 transition-colors relative py-1",
+                  isActive ? "text-[#22C55E]" : "text-[#8E8E93] hover:text-white"
+                )}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="bottom-nav-active"
+                    className="absolute top-0 inset-x-3 h-0.5 bg-[#22C55E] rounded-full"
+                  />
+                )}
+                <Icon className={cn("size-5", isActive ? "text-[#22C55E]" : "text-[#8E8E93]")} />
+                <span className="text-[10px] font-bold tracking-tight">
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }
